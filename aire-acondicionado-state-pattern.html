@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aire Acondicionado — Patrón de Diseño State</title>
+  <style>
+    /* ─── Reset & Base ─────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --color-bg:            #f5f4f0;
+      --color-surface:       #ffffff;
+      --color-surface-2:     #f0efeb;
+      --color-border:        rgba(0,0,0,0.12);
+      --color-border-hover:  rgba(0,0,0,0.25);
+      --color-text-primary:  #1a1a18;
+      --color-text-secondary:#5f5e5a;
+      --color-text-muted:    #a09f9b;
+
+      /* State-specific palettes */
+      --off-bg:      #f0efeb; --off-border:  #b4b2a9; --off-text:  #5f5e5a;
+      --on-bg:       #e1f5ee; --on-border:   #1d9e75; --on-text:   #085041;
+      --cold-bg:     #e6f1fb; --cold-border: #185fa5; --cold-text: #042c53;
+      --heat-bg:     #faece7; --heat-border: #993c1d; --heat-text: #4a1b0c;
+      --standby-bg:  #faeeda; --standby-border:#ba7517; --standby-text:#412402;
+      --protect-bg:  #fce8e8; --protect-border:#c0392b; --protect-text:#5a0a0a;
+      --eco-bg:      #eaf5e1; --eco-border:    #4a8c2a; --eco-text:    #1a3d0a;
+
+      --font-main:  'Segoe UI', system-ui, sans-serif;
+      --font-mono:  'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+      --radius-sm:  6px;
+      --radius-md:  10px;
+      --radius-lg:  16px;
+    }
+
+    body {
+      font-family: var(--font-main);
+      background: var(--color-bg);
+      color: var(--color-text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2.5rem 1rem 4rem;
+      gap: 2.5rem;
+    }
+
+    /* ─── Header ───────────────────────────────────────────────── */
+    header { text-align: center; }
+    header h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: var(--color-text-primary);
+    }
+    header p {
+      font-size: 0.82rem;
+      color: var(--color-text-secondary);
+      margin-top: 4px;
+      letter-spacing: 0.04em;
+    }
+
+    /* ─── Layout ───────────────────────────────────────────────── */
+    .layout {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      gap: 24px;
+      width: 100%;
+      max-width: 980px;
+      align-items: start;
+    }
+
+    /* ─── AC Simulator Panel ───────────────────────────────────── */
+    .ac-panel {
+      background: var(--color-surface);
+      border: 0.5px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 28px 24px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 22px;
+    }
+
+    .ac-panel-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--color-text-muted);
+      align-self: flex-start;
+    }
+
+    /* ─── AC Unit ──────────────────────────────────────────────── */
+    .ac-unit {
+      width: 280px;
+      height: 130px;
+      border-radius: 14px 14px 8px 8px;
+      border: 2px solid var(--color-border);
+      background: var(--color-surface-2);
+      position: relative;
+      overflow: hidden;
+      transition: background 0.4s ease, border-color 0.4s ease;
+    }
+
+    .ac-unit.state-off     { border-color: var(--off-border);     background: var(--off-bg); }
+    .ac-unit.state-on      { border-color: var(--on-border);      background: var(--on-bg); }
+    .ac-unit.state-cold    { border-color: var(--cold-border);    background: var(--cold-bg); }
+    .ac-unit.state-heat    { border-color: var(--heat-border);    background: var(--heat-bg); }
+    .ac-unit.state-standby { border-color: var(--standby-border); background: var(--standby-bg); }
+    .ac-unit.state-protect { border-color: var(--protect-border); background: var(--protect-bg); }
+    .ac-unit.state-eco     { border-color: var(--eco-border);     background: var(--eco-bg); }
+
+    .ac-top-bar {
+      position: absolute;
+      top: 12px; left: 16px; right: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .ac-brand {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      color: var(--color-text-secondary);
+    }
+
+    .ac-led {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--color-border);
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    .ac-led.active   { background: #1d9e75; box-shadow: 0 0 0 3px #9fe1cb55; }
+    .ac-led.standby  { background: #ef9f27; box-shadow: 0 0 0 3px #fac77555;
+                       animation: pulse 1.8s ease-in-out infinite; }
+    .ac-led.protect  { background: #c0392b; box-shadow: 0 0 0 3px #f1948a55;
+                       animation: pulse 0.7s ease-in-out infinite; }
+    .ac-led.eco      { background: #4a8c2a; box-shadow: 0 0 0 3px #a9d48855; }
+
+    .ac-screen {
+      width: 72px; height: 28px;
+      border-radius: 5px;
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--color-text-secondary);
+      transition: color 0.3s;
+    }
+    .ac-screen.off     { color: var(--color-text-muted); }
+    .ac-screen.on      { color: var(--on-text); }
+    .ac-screen.cold    { color: var(--cold-text); }
+    .ac-screen.heat    { color: var(--heat-text); }
+    .ac-screen.standby { color: var(--standby-text); animation: pulse 1.8s ease-in-out infinite; }
+    .ac-screen.protect { color: var(--protect-text); animation: pulse 0.7s ease-in-out infinite; }
+    .ac-screen.eco     { color: var(--eco-text); }
+
+    .ac-vents {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      height: 40px;
+      background: var(--color-surface);
+      border-top: 1.5px solid var(--color-border);
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      gap: 12px;
+      overflow: hidden;
+    }
+
+    .slat {
+      flex: 1; height: 3px;
+      border-radius: 2px;
+      background: var(--color-border);
+      transition: background 0.4s;
+    }
+    .ac-unit.state-on      .slat { background: #9fe1cb; }
+    .ac-unit.state-cold    .slat { background: #b5d4f4; }
+    .ac-unit.state-heat    .slat { background: #f5c4b3; }
+    .ac-unit.state-standby .slat { background: #fac775; }
+    .ac-unit.state-protect .slat { background: #f1948a; }
+    .ac-unit.state-eco     .slat { background: #a9d488; }
+
+    .louver {
+      position: absolute;
+      bottom: -5px; left: 0; right: 0;
+      height: 9px;
+      background: var(--color-border-hover);
+      border-radius: 0 0 8px 8px;
+      transition: transform 0.5s ease;
+    }
+    .ac-unit.state-on      .louver,
+    .ac-unit.state-cold    .louver,
+    .ac-unit.state-heat    .louver,
+    .ac-unit.state-eco     .louver { transform: rotate(-10deg) translateY(-3px); }
+
+    /* ─── Airflow ──────────────────────────────────────────────── */
+    .airflow-area {
+      width: 280px;
+      height: 55px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .particle {
+      position: absolute;
+      width: 4px;
+      border-radius: 2px;
+      opacity: 0;
+    }
+    .particle.cold    { background: #378add; animation: dropDown 1.4s ease-in infinite; }
+    .particle.heat    { background: #d85a30; animation: dropHeat 1.1s ease-in infinite; }
+    .particle.fresh   { background: #1d9e75; animation: dropDown 1.3s ease-in infinite; }
+    .particle.eco     { background: #4a8c2a; animation: dropDown 1.6s ease-in infinite; }
+
+    @keyframes dropDown {
+      0%   { opacity: 0; height: 0; transform: translateY(0); }
+      20%  { opacity: 0.75; height: 14px; }
+      100% { opacity: 0; height: 18px; transform: translateY(50px); }
+    }
+    @keyframes dropHeat {
+      0%   { opacity: 0; height: 0; transform: translateY(0) scaleX(1); }
+      20%  { opacity: 0.6; height: 12px; }
+      55%  { transform: translateY(28px) scaleX(1.4); }
+      100% { opacity: 0; height: 16px; transform: translateY(50px); }
+    }
+
+    /* ─── State Buttons ────────────────────────────────────────── */
+    .state-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      width: 100%;
+    }
+
+    .state-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 11px 14px;
+      border-radius: 10px;
+      border: 1.5px solid var(--color-border);
+      background: var(--color-surface);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      min-width: 68px;
+      font-family: var(--font-main);
+    }
+    .state-btn:hover { border-color: var(--color-border-hover); background: var(--color-surface-2); }
+    .state-btn .icon { font-size: 18px; line-height: 1; }
+    .state-btn .label { font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+                        text-transform: uppercase; color: var(--color-text-secondary); }
+
+    .state-btn.active.btn-off     { border-color: var(--off-border);     background: var(--off-bg); }
+    .state-btn.active.btn-on      { border-color: var(--on-border);      background: var(--on-bg); }
+    .state-btn.active.btn-cold    { border-color: var(--cold-border);    background: var(--cold-bg); }
+    .state-btn.active.btn-heat    { border-color: var(--heat-border);    background: var(--heat-bg); }
+    .state-btn.active.btn-standby { border-color: var(--standby-border); background: var(--standby-bg); }
+    .state-btn.active.btn-protect { border-color: var(--protect-border); background: var(--protect-bg); }
+    .state-btn.active.btn-eco     { border-color: var(--eco-border);     background: var(--eco-bg); }
+    .state-btn.active .label { color: var(--color-text-primary); }
+
+    /* ─── Code Panel ───────────────────────────────────────────── */
+    .code-panel {
+      background: #1a1a18;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      border: 0.5px solid rgba(255,255,255,0.06);
+    }
+
+    .code-tabs {
+      display: flex;
+      background: #111110;
+      border-bottom: 0.5px solid rgba(255,255,255,0.08);
+    }
+
+    .code-tab {
+      padding: 10px 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #5f5e5a;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      transition: color 0.2s;
+      border-bottom: 2px solid transparent;
+      font-family: var(--font-main);
+    }
+    .code-tab:hover { color: #a09f9b; }
+    .code-tab.active { color: #e1f5ee; border-bottom-color: #1d9e75; }
+
+    .code-block {
+      display: none;
+      padding: 20px;
+      overflow-x: auto;
+      max-height: 520px;
+      overflow-y: auto;
+    }
+    .code-block.visible { display: block; }
+
+    pre {
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.75;
+      color: #d4d3ce;
+      white-space: pre;
+    }
+
+    /* Syntax highlight colors */
+    .kw  { color: #c792ea; }   /* keywords */
+    .cl  { color: #82aaff; }   /* class names */
+    .fn  { color: #82aaff; }   /* function names */
+    .str { color: #c3e88d; }   /* strings */
+    .num { color: #f78c6c; }   /* numbers */
+    .cm  { color: #546e7a; font-style: italic; } /* comments */
+    .prop{ color: #ffcb6b; }   /* properties */
+    .val { color: #89ddff; }   /* values */
+
+    /* ─── Animations ───────────────────────────────────────────── */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>Aire Acondicionado — Patrón de Diseño State</h1>
+    <p>Haz clic en un estado para ver cómo el patrón delega el comportamiento</p>
+  </header>
+
+  <div class="layout">
+
+    <!-- ══ AC Simulator ══════════════════════════════════════════ -->
+    <div class="ac-panel">
+      <span class="ac-panel-title" id="state-label">Estado actual: Apagado</span>
+
+      <div class="ac-unit state-off" id="ac-unit">
+        <div class="ac-top-bar">
+          <span class="ac-brand">FRÍO MAX</span>
+          <span class="ac-led" id="ac-led"></span>
+          <span class="ac-screen off" id="ac-screen">— — —</span>
+        </div>
+        <div class="ac-vents">
+          <div class="slat"></div><div class="slat"></div>
+          <div class="slat"></div><div class="slat"></div>
+          <div class="slat"></div><div class="slat"></div>
+          <div class="louver"></div>
+        </div>
+      </div>
+
+      <div class="airflow-area" id="airflow"></div>
+
+      <div class="state-controls">
+        <button class="state-btn btn-off active" onclick="ctx.request('off', this)">
+          <span class="icon">⏻</span><span class="label">Apagado</span>
+        </button>
+        <button class="state-btn btn-on" onclick="ctx.request('on', this)">
+          <span class="icon">✓</span><span class="label">Encendido</span>
+        </button>
+        <button class="state-btn btn-cold" onclick="ctx.request('cold', this)">
+          <span class="icon">❄</span><span class="label">Frío</span>
+        </button>
+        <button class="state-btn btn-heat" onclick="ctx.request('heat', this)">
+          <span class="icon">🔥</span><span class="label">Caliente</span>
+        </button>
+        <button class="state-btn btn-standby" onclick="ctx.request('standby', this)">
+          <span class="icon">◑</span><span class="label">Reposo</span>
+        </button>
+        <button class="state-btn btn-eco" onclick="ctx.request('eco', this)">
+          <span class="icon">🌿</span><span class="label">Ecológico</span>
+        </button>
+        <button class="state-btn btn-protect" onclick="ctx.request('protect', this)">
+          <span class="icon">🛡</span><span class="label">Protección</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ══ Code Panel ════════════════════════════════════════════ -->
+    <div class="code-panel">
+      <div class="code-tabs">
+        <button class="code-tab active" onclick="showTab('context')">Contexto</button>
+        <button class="code-tab" onclick="showTab('states')">Estados</button>
+        <button class="code-tab" onclick="showTab('ui')">UI / Render</button>
+      </div>
+
+      <!-- TAB 1: Context (the pattern's Context class) -->
+      <div class="code-block visible" id="tab-context">
+<pre>
+<span class="cm">/**
+ * PATRÓN STATE — Contexto
+ *
+ * El Contexto mantiene una referencia al estado
+ * actual y delega en él todo el comportamiento.
+ * No necesita saber QUÉ hace cada estado.
+ */</span>
+
+<span class="kw">class</span> <span class="cl">AirConditionerContext</span> {
+
+  <span class="fn">constructor</span>() {
+    <span class="cm">// El contexto empieza en estado Apagado</span>
+    <span class="prop">this</span>.currentState = <span class="kw">new</span> <span class="cl">OffState</span>(<span class="prop">this</span>);
+    <span class="prop">this</span>.ui = <span class="kw">new</span> <span class="cl">AcUI</span>();
+  }
+
+  <span class="cm">/**
+   * transitionTo — único punto de cambio de estado.
+   * Los estados llaman a este método para cambiar
+   * el comportamiento del contexto en tiempo de
+   * ejecución (sin condicionales).
+   */</span>
+  <span class="fn">transitionTo</span>(state) {
+    <span class="prop">this</span>.currentState = state;
+    <span class="prop">this</span>.currentState.<span class="fn">enter</span>();
+  }
+
+  <span class="cm">/**
+   * request — punto de entrada desde la UI.
+   * El contexto simplemente pregunta al estado
+   * actual qué hacer con la solicitud.
+   */</span>
+  <span class="fn">request</span>(action, btn) {
+    <span class="prop">this</span>.currentState.<span class="fn">handle</span>(action, btn);
+  }
+}
+
+<span class="cm">// Instancia global del contexto (el "AC")</span>
+<span class="kw">const</span> ctx = <span class="kw">new</span> <span class="cl">AirConditionerContext</span>();
+</pre>
+      </div>
+
+      <!-- TAB 2: Concrete States -->
+      <div class="code-block" id="tab-states">
+<pre>
+<span class="cm">/**
+ * PATRÓN STATE — Interfaz base y Estados Concretos
+ *
+ * Cada estado encapsula su propio comportamiento.
+ * Todos implementan enter() y handle().
+ */</span>
+
+<span class="cm">// ── Interfaz / clase base ─────────────────────</span>
+<span class="kw">class</span> <span class="cl">AcState</span> {
+  <span class="fn">constructor</span>(context) {
+    <span class="prop">this</span>.ctx = context;
+  }
+  <span class="fn">enter</span>()  { <span class="cm">/* se ejecuta al ingresar al estado */</span> }
+  <span class="fn">handle</span>() { <span class="cm">/* procesa la solicitud de la UI   */</span> }
+}
+
+<span class="cm">// ── Estado: Apagado ───────────────────────────</span>
+<span class="kw">class</span> <span class="cl">OffState</span> <span class="kw">extends</span> <span class="cl">AcState</span> {
+  <span class="fn">enter</span>() {
+    <span class="prop">this</span>.ctx.ui.<span class="fn">render</span>({
+      unitClass: <span class="str">'state-off'</span>,
+      screen:    <span class="str">'— — —'</span>,
+      screenCls: <span class="str">'off'</span>,
+      led:       <span class="str">''</span>,
+      airType:   <span class="val">null</span>,
+      label:     <span class="str">'Apagado'</span>
+    });
+  }
+  <span class="fn">handle</span>(action, btn) {
+    <span class="cm">// Desde apagado solo se puede encender o poner en reposo</span>
+    <span class="kw">if</span> (action === <span class="str">'on'</span>)
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> <span class="cl">OnState</span>(<span class="prop">this</span>.ctx), btn);
+    <span class="kw">else if</span> (action === <span class="str">'standby'</span>)
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> <span class="cl">StandbyState</span>(<span class="prop">this</span>.ctx), btn);
+  }
+}
+
+<span class="cm">// ── Estado: Encendido ─────────────────────────</span>
+<span class="kw">class</span> <span class="cl">OnState</span> <span class="kw">extends</span> <span class="cl">AcState</span> {
+  <span class="fn">enter</span>() {
+    <span class="prop">this</span>.ctx.ui.<span class="fn">render</span>({
+      unitClass: <span class="str">'state-on'</span>,
+      screen:    <span class="str">'24 °C'</span>,
+      screenCls: <span class="str">'on'</span>,
+      led:       <span class="str">'active'</span>,
+      airType:   <span class="str">'fresh'</span>,
+      label:     <span class="str">'Encendido'</span>
+    });
+  }
+  <span class="fn">handle</span>(action, btn) {
+    <span class="kw">const</span> map = {
+      off:     <span class="cl">OffState</span>,
+      cold:    <span class="cl">ColdState</span>,
+      heat:    <span class="cl">HeatState</span>,
+      standby: <span class="cl">StandbyState</span>
+    };
+    <span class="kw">if</span> (map[action])
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> map[action](<span class="prop">this</span>.ctx), btn);
+  }
+}
+
+<span class="cm">// ── Estado: Frío ──────────────────────────────</span>
+<span class="kw">class</span> <span class="cl">ColdState</span> <span class="kw">extends</span> <span class="cl">AcState</span> {
+  <span class="fn">enter</span>() {
+    <span class="prop">this</span>.ctx.ui.<span class="fn">render</span>({
+      unitClass: <span class="str">'state-cold'</span>,
+      screen:    <span class="str">'18 °C'</span>,
+      screenCls: <span class="str">'cold'</span>,
+      led:       <span class="str">'active'</span>,
+      airType:   <span class="str">'cold'</span>,
+      label:     <span class="str">'Aire frío'</span>
+    });
+  }
+  <span class="fn">handle</span>(action, btn) {
+    <span class="kw">const</span> map = {
+      off:     <span class="cl">OffState</span>,
+      on:      <span class="cl">OnState</span>,
+      heat:    <span class="cl">HeatState</span>,
+      standby: <span class="cl">StandbyState</span>
+    };
+    <span class="kw">if</span> (map[action])
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> map[action](<span class="prop">this</span>.ctx), btn);
+  }
+}
+
+<span class="cm">// ── Estado: Caliente ──────────────────────────</span>
+<span class="kw">class</span> <span class="cl">HeatState</span> <span class="kw">extends</span> <span class="cl">AcState</span> {
+  <span class="fn">enter</span>() {
+    <span class="prop">this</span>.ctx.ui.<span class="fn">render</span>({
+      unitClass: <span class="str">'state-heat'</span>,
+      screen:    <span class="str">'28 °C'</span>,
+      screenCls: <span class="str">'heat'</span>,
+      led:       <span class="str">'active'</span>,
+      airType:   <span class="str">'heat'</span>,
+      label:     <span class="str">'Aire caliente'</span>
+    });
+  }
+  <span class="fn">handle</span>(action, btn) {
+    <span class="kw">const</span> map = {
+      off:     <span class="cl">OffState</span>,
+      on:      <span class="cl">OnState</span>,
+      cold:    <span class="cl">ColdState</span>,
+      standby: <span class="cl">StandbyState</span>
+    };
+    <span class="kw">if</span> (map[action])
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> map[action](<span class="prop">this</span>.ctx), btn);
+  }
+}
+
+<span class="cm">// ── Estado: Reposo ────────────────────────────</span>
+<span class="kw">class</span> <span class="cl">StandbyState</span> <span class="kw">extends</span> <span class="cl">AcState</span> {
+  <span class="fn">enter</span>() {
+    <span class="prop">this</span>.ctx.ui.<span class="fn">render</span>({
+      unitClass: <span class="str">'state-standby'</span>,
+      screen:    <span class="str">'· · ·'</span>,
+      screenCls: <span class="str">'standby'</span>,
+      led:       <span class="str">'standby'</span>,
+      airType:   <span class="val">null</span>,
+      label:     <span class="str">'Reposo'</span>
+    });
+  }
+  <span class="fn">handle</span>(action, btn) {
+    <span class="kw">if</span> (action === <span class="str">'on'</span>)
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> <span class="cl">OnState</span>(<span class="prop">this</span>.ctx), btn);
+    <span class="kw">else if</span> (action === <span class="str">'off'</span>)
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> <span class="cl">OffState</span>(<span class="prop">this</span>.ctx), btn);
+  }
+}
+
+<span class="cm">// ── Estado: Ecológico ─────────────────────────</span>
+<span class="kw">class</span> <span class="cl">EcoState</span> <span class="kw">extends</span> <span class="cl">AcState</span> {
+  <span class="fn">enter</span>() {
+    <span class="prop">this</span>.ctx.ui.<span class="fn">render</span>({
+      unitClass: <span class="str">'state-eco'</span>,
+      screen:    <span class="str">'ECO'</span>,
+      screenCls: <span class="str">'eco'</span>,
+      led:       <span class="str">'eco'</span>,
+      airType:   <span class="str">'eco'</span>,
+      label:     <span class="str">'Ecológico'</span>
+    });
+  }
+  <span class="fn">handle</span>(action, btn) {
+    <span class="cm">// Disponible desde cualquier estado activo</span>
+    <span class="kw">const</span> map = {
+      off:     <span class="cl">OffState</span>,
+      on:      <span class="cl">OnState</span>,
+      cold:    <span class="cl">ColdState</span>,
+      heat:    <span class="cl">HeatState</span>,
+      standby: <span class="cl">StandbyState</span>,
+      protect: <span class="cl">ProtectState</span>
+    };
+    <span class="kw">if</span> (map[action])
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> map[action](<span class="prop">this</span>.ctx), btn);
+  }
+}
+
+<span class="cm">// ── Estado: Protección ────────────────────────</span>
+<span class="kw">class</span> <span class="cl">ProtectState</span> <span class="kw">extends</span> <span class="cl">AcState</span> {
+  <span class="fn">enter</span>() {
+    <span class="prop">this</span>.ctx.ui.<span class="fn">render</span>({
+      unitClass: <span class="str">'state-protect'</span>,
+      screen:    <span class="str">'PROT'</span>,
+      screenCls: <span class="str">'protect'</span>,
+      led:       <span class="str">'protect'</span>,
+      airType:   <span class="val">null</span>,
+      label:     <span class="str">'Protección'</span>
+    });
+  }
+  <span class="fn">handle</span>(action, btn) {
+    <span class="cm">// ÚNICO destino permitido: apagar el equipo.
+    // Cualquier otra acción se ignora por seguridad.</span>
+    <span class="kw">if</span> (action === <span class="str">'off'</span>)
+      <span class="prop">this</span>.ctx.<span class="fn">transitionTo</span>(<span class="kw">new</span> <span class="cl">OffState</span>(<span class="prop">this</span>.ctx), btn);
+  }
+}
+</pre>
+      </div>
+
+      <!-- TAB 3: UI Renderer -->
+      <div class="code-block" id="tab-ui">
+<pre>
+<span class="cm">/**
+ * UI / Render
+ *
+ * AcUI es la capa de presentación. Recibe los
+ * datos del estado activo y actualiza el DOM.
+ * No contiene lógica de negocio.
+ */</span>
+
+<span class="kw">class</span> <span class="cl">AcUI</span> {
+
+  <span class="fn">constructor</span>() {
+    <span class="prop">this</span>.unit    = document.<span class="fn">getElementById</span>(<span class="str">'ac-unit'</span>);
+    <span class="prop">this</span>.led     = document.<span class="fn">getElementById</span>(<span class="str">'ac-led'</span>);
+    <span class="prop">this</span>.screen  = document.<span class="fn">getElementById</span>(<span class="str">'ac-screen'</span>);
+    <span class="prop">this</span>.airflow = document.<span class="fn">getElementById</span>(<span class="str">'airflow'</span>);
+    <span class="prop">this</span>.label   = document.<span class="fn">getElementById</span>(<span class="str">'state-label'</span>);
+    <span class="prop">this</span>._particleTimer = <span class="val">null</span>;
+  }
+
+  <span class="cm">/**
+   * render — recibe la descripción del estado y
+   * actualiza todos los elementos visuales.
+   */</span>
+  <span class="fn">render</span>({ unitClass, screen, screenCls, led, airType, label }) {
+
+    <span class="cm">// 1. Clases en la unidad (color, borde)</span>
+    <span class="prop">this</span>.unit.className = <span class="str">`ac-unit $</span>{unitClass}<span class="str">`</span>;
+
+    <span class="cm">// 2. Pantalla digital</span>
+    <span class="prop">this</span>.screen.textContent = screen;
+    <span class="prop">this</span>.screen.className   = <span class="str">`ac-screen $</span>{screenCls}<span class="str">`</span>;
+
+    <span class="cm">// 3. LED de estado</span>
+    <span class="prop">this</span>.led.className = <span class="str">`ac-led $</span>{led}<span class="str">`</span>;
+
+    <span class="cm">// 4. Etiqueta descriptiva</span>
+    <span class="prop">this</span>.label.textContent = <span class="str">`Estado actual: $</span>{label}<span class="str">`</span>;
+
+    <span class="cm">// 5. Partículas de flujo de aire</span>
+    <span class="prop">this</span>.<span class="fn">_clearParticles</span>();
+    <span class="kw">if</span> (airType) <span class="prop">this</span>.<span class="fn">_spawnParticles</span>(airType);
+
+    <span class="cm">// 6. Resaltar botón activo</span>
+    document.<span class="fn">querySelectorAll</span>(<span class="str">'.state-btn'</span>).<span class="fn">forEach</span>(
+      b => b.classList.<span class="fn">remove</span>(<span class="str">'active'</span>)
+    );
+  }
+
+  <span class="fn">_clearParticles</span>() {
+    <span class="fn">clearInterval</span>(<span class="prop">this</span>._particleTimer);
+    <span class="prop">this</span>.airflow.innerHTML = <span class="str">''</span>;
+  }
+
+  <span class="fn">_spawnParticles</span>(type) {
+    <span class="kw">const</span> positions = [<span class="num">20</span>, <span class="num">55</span>, <span class="num">90</span>, <span class="num">125</span>, <span class="num">160</span>, <span class="num">200</span>, <span class="num">238</span>];
+    <span class="kw">const</span> delays    = [<span class="num">0</span>, <span class="num">0.3</span>, <span class="num">0.6</span>, <span class="num">0.1</span>, <span class="num">0.5</span>, <span class="num">0.2</span>, <span class="num">0.7</span>];
+    positions.<span class="fn">forEach</span>((x, i) => {
+      <span class="kw">const</span> p = document.<span class="fn">createElement</span>(<span class="str">'div'</span>);
+      p.className           = <span class="str">`particle $</span>{type}<span class="str">`</span>;
+      p.style.left          = x + <span class="str">'px'</span>;
+      p.style.animationDelay= delays[i] + <span class="str">'s'</span>;
+      <span class="prop">this</span>.airflow.<span class="fn">appendChild</span>(p);
+    });
+  }
+}
+
+<span class="cm">// ── Helpers globales ──────────────────────────</span>
+
+<span class="cm">// Activa la pestaña de código seleccionada</span>
+<span class="kw">function</span> <span class="fn">showTab</span>(name) {
+  document.<span class="fn">querySelectorAll</span>(<span class="str">'.code-block'</span>).<span class="fn">forEach</span>(
+    el => el.classList.<span class="fn">remove</span>(<span class="str">'visible'</span>)
+  );
+  document.<span class="fn">querySelectorAll</span>(<span class="str">'.code-tab'</span>).<span class="fn">forEach</span>(
+    el => el.classList.<span class="fn">remove</span>(<span class="str">'active'</span>)
+  );
+  document.<span class="fn">getElementById</span>(<span class="str">`tab-$</span>{name}<span class="str">`</span>)
+           .classList.<span class="fn">add</span>(<span class="str">'visible'</span>);
+  event.target.classList.<span class="fn">add</span>(<span class="str">'active'</span>);
+}
+</pre>
+      </div>
+    </div>
+
+  </div><!-- /layout -->
+
+  <!-- ══ JS — Patrón State ════════════════════════════════════════ -->
+  <script>
+
+    /* ═══════════════════════════════════════════════════════
+     *  PATRÓN STATE
+     *  ────────────────────────────────────────────────────
+     *  Participantes:
+     *    · AcState               → interfaz base
+     *    · OffState              → estado concreto: apagado
+     *    · OnState               → estado concreto: encendido
+     *    · ColdState             → estado concreto: aire frío
+     *    · HeatState             → estado concreto: aire caliente
+     *    · StandbyState          → estado concreto: reposo
+     *    · EcoState              → estado concreto: ecológico
+     *    · ProtectState          → estado concreto: protección
+     *    · AirConditionerContext → contexto que delega en el estado
+     *    · AcUI                  → capa de presentación (DOM)
+     * ═══════════════════════════════════════════════════════ */
+
+
+    /* ─── Interfaz / clase base ─────────────────────────────── */
+
+    class AcState {
+      constructor(context) { this.ctx = context; }
+
+      // Se ejecuta al entrar al estado
+      enter() {}
+
+      // Procesa la acción solicitada desde la UI
+      handle(action, btn) {}
+    }
+
+
+    /* ─── Estados Concretos ─────────────────────────────────── */
+
+    class OffState extends AcState {
+      enter() {
+        this.ctx.ui.render({
+          unitClass : 'state-off',
+          screen    : '— — —',
+          screenCls : 'off',
+          led       : '',
+          airType   : null,
+          label     : 'Apagado'
+        });
+      }
+      handle(action, btn) {
+        if (action === 'on')
+          this.ctx.transitionTo(new OnState(this.ctx), btn);
+        else if (action === 'standby')
+          this.ctx.transitionTo(new StandbyState(this.ctx), btn);
+        // Las demás acciones se ignoran (estado no permite)
+      }
+    }
+
+    class OnState extends AcState {
+      enter() {
+        this.ctx.ui.render({
+          unitClass : 'state-on',
+          screen    : '24 °C',
+          screenCls : 'on',
+          led       : 'active',
+          airType   : 'fresh',
+          label     : 'Encendido'
+        });
+      }
+      handle(action, btn) {
+        const map = {
+          off     : OffState,
+          cold    : ColdState,
+          heat    : HeatState,
+          standby : StandbyState,
+          eco     : EcoState,
+          protect : ProtectState
+        };
+        if (map[action])
+          this.ctx.transitionTo(new map[action](this.ctx), btn);
+      }
+    }
+
+    class ColdState extends AcState {
+      enter() {
+        this.ctx.ui.render({
+          unitClass : 'state-cold',
+          screen    : '18 °C',
+          screenCls : 'cold',
+          led       : 'active',
+          airType   : 'cold',
+          label     : 'Aire frío'
+        });
+      }
+      handle(action, btn) {
+        const map = {
+          off     : OffState,
+          on      : OnState,
+          heat    : HeatState,
+          standby : StandbyState,
+          eco     : EcoState,
+          protect : ProtectState
+        };
+        if (map[action])
+          this.ctx.transitionTo(new map[action](this.ctx), btn);
+      }
+    }
+
+    class HeatState extends AcState {
+      enter() {
+        this.ctx.ui.render({
+          unitClass : 'state-heat',
+          screen    : '28 °C',
+          screenCls : 'heat',
+          led       : 'active',
+          airType   : 'heat',
+          label     : 'Aire caliente'
+        });
+      }
+      handle(action, btn) {
+        const map = {
+          off     : OffState,
+          on      : OnState,
+          cold    : ColdState,
+          standby : StandbyState,
+          eco     : EcoState,
+          protect : ProtectState
+        };
+        if (map[action])
+          this.ctx.transitionTo(new map[action](this.ctx), btn);
+      }
+    }
+
+    class StandbyState extends AcState {
+      enter() {
+        this.ctx.ui.render({
+          unitClass : 'state-standby',
+          screen    : '· · ·',
+          screenCls : 'standby',
+          led       : 'standby',
+          airType   : null,
+          label     : 'Reposo'
+        });
+      }
+      handle(action, btn) {
+        const map = {
+          on      : OnState,
+          off     : OffState,
+          eco     : EcoState,
+          protect : ProtectState
+        };
+        if (map[action])
+          this.ctx.transitionTo(new map[action](this.ctx), btn);
+      }
+    }
+
+    class EcoState extends AcState {
+      enter() {
+        this.ctx.ui.render({
+          unitClass : 'state-eco',
+          screen    : 'ECO',
+          screenCls : 'eco',
+          led       : 'eco',
+          airType   : 'eco',
+          label     : 'Ecológico'
+        });
+      }
+      handle(action, btn) {
+        const map = {
+          off     : OffState,
+          on      : OnState,
+          cold    : ColdState,
+          heat    : HeatState,
+          standby : StandbyState,
+          protect : ProtectState
+        };
+        if (map[action])
+          this.ctx.transitionTo(new map[action](this.ctx), btn);
+      }
+    }
+
+    class ProtectState extends AcState {
+      enter() {
+        this.ctx.ui.render({
+          unitClass : 'state-protect',
+          screen    : 'PROT',
+          screenCls : 'protect',
+          led       : 'protect',
+          airType   : null,
+          label     : 'Protección'
+        });
+      }
+      handle(action, btn) {
+        // En protección ÚNICAMENTE se puede apagar el equipo
+        if (action === 'off')
+          this.ctx.transitionTo(new OffState(this.ctx), btn);
+        // Cualquier otra acción es ignorada por seguridad
+      }
+    }
+
+
+    /* ─── UI / Capa de presentación ─────────────────────────── */
+
+    class AcUI {
+      constructor() {
+        this.unit    = document.getElementById('ac-unit');
+        this.led     = document.getElementById('ac-led');
+        this.screen  = document.getElementById('ac-screen');
+        this.airflow = document.getElementById('airflow');
+        this.label   = document.getElementById('state-label');
+      }
+
+      render({ unitClass, screen, screenCls, led, airType, label }) {
+        this.unit.className   = `ac-unit ${unitClass}`;
+        this.screen.textContent = screen;
+        this.screen.className = `ac-screen ${screenCls}`;
+        this.led.className    = `ac-led ${led}`;
+        this.label.textContent = `Estado actual: ${label}`;
+        this._clearParticles();
+        if (airType) this._spawnParticles(airType);
+      }
+
+      _clearParticles() {
+        this.airflow.innerHTML = '';
+      }
+
+      _spawnParticles(type) {
+        const positions = [20, 55, 90, 125, 160, 200, 238];
+        const delays    = [0, 0.3, 0.6, 0.1, 0.5, 0.2, 0.7];
+        positions.forEach((x, i) => {
+          const p = document.createElement('div');
+          p.className            = `particle ${type}`;
+          p.style.left           = x + 'px';
+          p.style.animationDelay = delays[i] + 's';
+          this.airflow.appendChild(p);
+        });
+      }
+    }
+
+
+    /* ─── Contexto ───────────────────────────────────────────── */
+
+    class AirConditionerContext {
+      constructor() {
+        this.ui = new AcUI();
+        // Comienza en el estado Apagado
+        this.currentState = new OffState(this);
+      }
+
+      // Cambia el estado actual y ejecuta su lógica de entrada
+      transitionTo(state, btn) {
+        this.currentState = state;
+        this.currentState.enter();
+        // Marcar botón activo en la UI
+        if (btn) {
+          document.querySelectorAll('.state-btn')
+                  .forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        }
+      }
+
+      // Punto de entrada desde la UI — delega en el estado actual
+      request(action, btn) {
+        this.currentState.handle(action, btn);
+      }
+    }
+
+
+    /* ─── Inicialización ─────────────────────────────────────── */
+
+    const ctx = new AirConditionerContext();
+
+
+    /* ─── Helper para las pestañas de código ─────────────────── */
+
+    function showTab(name) {
+      document.querySelectorAll('.code-block')
+              .forEach(el => el.classList.remove('visible'));
+      document.querySelectorAll('.code-tab')
+              .forEach(el => el.classList.remove('active'));
+      document.getElementById(`tab-${name}`).classList.add('visible');
+      event.target.classList.add('active');
+    }
+
+  </script>
+</body>
+</html>
